@@ -39,6 +39,10 @@ const config: HardhatUserConfig = {
     arbitrumGoerli: {
       url: "https://arbitrum-goerli.publicnode.com",
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : []
+    },
+    goerli: {
+      url: "https://rpc.ankr.com/eth_goerli",
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : []
     }
   },
   mocha: {
@@ -49,7 +53,8 @@ const config: HardhatUserConfig = {
       polygon: process.env.ETHERSCAN_API_KEY || '',
       polygonMumbai: process.env.ETHERSCAN_API_KEY || '',
       bsc: process.env.ETHERSCAN_API_KEY || '',
-      bscTestnet: process.env.ETHERSCAN_API_KEY || ''
+      bscTestnet: process.env.ETHERSCAN_API_KEY || '',
+      goerli: process.env.ETHERSCAN_API_KEY || ''
     }
   }
 };
