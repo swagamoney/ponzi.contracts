@@ -12,10 +12,10 @@ contract VaultKeeper is ChainlinkClient, ConfirmedOwner {
     string private baseURI;
     string private endpoint;
 
-    bytes32 private jobId;
-    uint256 private fee;
+    bytes32 public jobId;
+    uint256 public fee;
 
-    IERC20 private token;
+    IERC20 public token;
 
     mapping(bytes32 => address) private requests;
 
