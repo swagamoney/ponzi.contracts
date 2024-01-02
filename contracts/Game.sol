@@ -25,7 +25,8 @@ contract Game is Initializable, ChainlinkClient, Ownable {
 
     constructor() {}
 
-    function initialize(uint256 _id, address _creator, uint256 _creatorFee) external initializer {
+    function initialize(uint256 _id, address _creator, uint256 _creatorFee) external initializer onlyOwner {
+        _transferOwnership(msg.sender);
         factory = IGameFactory(msg.sender);
         id = _id;
         creator = _creator;

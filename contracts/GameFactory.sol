@@ -83,6 +83,14 @@ contract GameFactory is Ownable {
         );
     }
 
+    function setBaseURI(string memory _baseURI) external onlyOwner {
+        baseURI = _baseURI;
+    }
+
+    function setEndpoint(string memory _endpoint) external onlyOwner {
+        endpoint = _endpoint;
+    }
+
     function withdrawLinkFromGame(IGame game) public onlyOwner {
         game.withdrawLink(owner());
     }
