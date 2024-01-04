@@ -9,15 +9,12 @@ import "./interfaces/IGame.sol";
 
 contract GameFactory is Ownable {
 
-    uint256 constant public MAX_BPS = 10000;
     uint256 internal constant LINK_DIVISIBILITY = 10**18;
 
-    IERC20 public paymentToken;
     address public master;
     address public chainlinkToken;
     address public chainlinkOracle;
     uint256 public gamesCount;
-    uint256 public platformFee;
     uint256 public chainlinkFee;
     string public baseURI;
     string public endpoint;
@@ -27,43 +24,30 @@ contract GameFactory is Ownable {
 
     using Clones for address;
 
-    event CreateGame(address contractAddress, uint256 id, uint256 initialDeposit, address creator, uint256 creatorFee);
+    event CreateGame(address contractAddress, uint256 id, uint256 initialDeposit, address creator, uint256 fee, string name, uint256 roi, uint256 maxDeposit, uint256 minDeposit, string file);
 
-    constructor(address _master, IERC20 _paymentToken, uint256 _platformFee, string memory _baseURI, string memory _endpoint, address _chainlinkToken, address _chainlinkOracle, bytes32 _jobId) {
+    constructor(address _master, string memory _baseURI, string memory _endpoint, address _chainlinkToken, address _chainlinkOracle, bytes32 _jobId) {
         master = _master;
-        paymentToken = _paymentToken;
         jobId = _jobId;
         chainlinkFee = (1 * LINK_DIVISIBILITY) / 10;
-        platformFee = _platformFee;
         baseURI = _baseURI;
         endpoint = _endpoint;
         chainlinkToken = _chainlinkToken;
         chainlinkOracle = _chainlinkOracle;
     }
 
-    function setPaymentToken(IERC20 _paymentToken) external onlyOwner {
-        paymentToken = _paymentToken;
-    }
-
-    function createGame(uint256 initialDeposit, uint256 creatorFee) external {
+    function createGame(uint256 initialDeposit, uint256 fee, uint256 maxDeposit, uint256 minDeposit, uint256 roi, string memory file, string memory name) external payable {
         address sender = msg.sender;
         address clone = master.clone();
 
-        uint256 platformFeeValue = initialDeposit * platformFee / MAX_BPS;
+        payable(clone).transfer(msg.value);
 
-        paymentToken.transferFrom(sender, owner(), platformFeeValue);
-        paymentToken.transferFrom(sender, clone, initialDeposit - platformFeeValue);
-
-        IGame(clone).initialize(gamesCount, sender, creatorFee);
+        IGame(clone).initialize(gamesCount, sender, fee, minDeposit, maxDeposit);
 
         isGame[clone] = true;
 
-        emit CreateGame(clone, gamesCount, initialDeposit - platformFeeValue, sender, creatorFee);
+        emit CreateGame(clone, gamesCount, initialDeposit, sender, fee, name, roi, maxDeposit, minDeposit, file);
         gamesCount++;
-    }
-
-    function setPlatformFee(uint256 _platformFee) external onlyOwner {
-        platformFee = _platformFee;
     }
 
     function setMaster(address _master) external onlyOwner {
@@ -72,7 +56,7 @@ contract GameFactory is Ownable {
 
     function requestLink() external {
         require(isGame[msg.sender], "requestLink: not a game");
-        paymentToken.transfer(msg.sender, chainlinkFee);
+        IERC20(chainlinkToken).transfer(msg.sender, chainlinkFee);
     }
 
     function withdrawLink() public onlyOwner {

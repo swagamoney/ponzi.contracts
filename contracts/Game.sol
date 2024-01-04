@@ -13,43 +13,44 @@ contract Game is Initializable, ChainlinkClient, Ownable {
 
     uint256 public id;
     uint256 public creatorFee;
+    uint256 public platformFee;
+    uint256 public minDeposit;
+    uint256 public maxDeposit;
     address public creator;
     IGameFactory public factory;
 
     mapping(bytes32 => address) private requests;
+    mapping(bytes32 => bool) private isJackpotRequest;
+    mapping(bytes32 => string) private betIds;
 
     event RequestFulfilled(bytes32 reqId, uint256 value);
     event RequestRejected(bytes32 reqId, uint256 value);
     event Deposit(address sender, uint256 gameId, uint256 value);
-    event Withdraw(address sender, uint256 gameId, uint256 value);
+    event Withdraw(address sender, uint256 gameId, uint256 value, string betId);
+    event JackpotWithdraw(address sender, uint256 gameId, uint256 value, string betId);
 
     constructor() {}
 
-    function initialize(uint256 _id, address _creator, uint256 _creatorFee) external initializer onlyOwner {
+    function initialize(uint256 _id, address _creator, uint256 _creatorFee, uint256 _minDeposit, uint256 _maxDeposit) external initializer onlyOwner {
         _transferOwnership(msg.sender);
         factory = IGameFactory(msg.sender);
         id = _id;
         creator = _creator;
-        creatorFee = _creatorFee;
+        creatorFee = _creatorFee / 2;
+        platformFee = _creatorFee / 2;
         setChainlinkOracle(factory.chainlinkOracle());
         setChainlinkToken(factory.chainlinkToken());
+        minDeposit = _minDeposit;
+        maxDeposit = _maxDeposit;
     }
 
-    function deposit(uint256 value) external {
+    function deposit() external payable {
+        require(msg.value >= minDeposit && msg.value <= maxDeposit, "Invalid deposit amount");
         address sender = msg.sender;
-
-        uint256 platformFeeValue = value * factory.platformFee() / MAX_BPS;
-        uint256 creatorFeeValue = value * creatorFee / MAX_BPS;
-        uint256 depositValue = value - (platformFeeValue + creatorFeeValue);
-
-        factory.paymentToken().transferFrom(sender, factory.owner(), platformFeeValue);
-        factory.paymentToken().transferFrom(sender, creator, creatorFeeValue);
-        factory.paymentToken().transferFrom(sender, address(this), depositValue);
-
-        emit Deposit(sender, id, depositValue);
+        emit Deposit(sender, id, msg.value);
     }
 
-    function requestWithdraw() public {
+    function requestWithdraw(string memory betId) public {
         address sender = msg.sender;
         Chainlink.Request memory req = buildChainlinkRequest(
             factory.jobId(),
@@ -58,7 +59,28 @@ contract Game is Initializable, ChainlinkClient, Ownable {
         );
         req.add(
             "get",
-            string(abi.encodePacked(factory.baseURI(), factory.endpoint(), "?gameId=", id, "&wallet=", addressToString(sender)))
+            string(abi.encodePacked(factory.baseURI(), factory.endpoint(), "?gameId=", id, "&wallet=", addressToString(sender), "&betId=", betId))
+        );
+        req.add("path", "data,amount");
+        req.addInt("times", 10**18);
+
+        factory.requestLink();
+        bytes32 reqId = sendChainlinkRequest(req, factory.chainlinkFee());
+
+        betIds[reqId] = betId;
+        requests[reqId] = msg.sender;
+    }
+
+    function requestJackpotWithdraw(string memory betId) public {
+        address sender = msg.sender;
+        Chainlink.Request memory req = buildChainlinkRequest(
+            factory.jobId(),
+            address(this),
+            this.fulfillRequest.selector
+        );
+        req.add(
+            "get",
+            string(abi.encodePacked(factory.baseURI(), factory.endpoint(), "?gameId=", id, "&wallet=", addressToString(sender), "&betId=", betId))
         );
         req.add("path", "data,amount");
         req.addInt("times", 10**18);
@@ -67,17 +89,29 @@ contract Game is Initializable, ChainlinkClient, Ownable {
         bytes32 reqId = sendChainlinkRequest(req, factory.chainlinkFee());
 
         requests[reqId] = msg.sender;
+        betIds[reqId] = betId;
+        isJackpotRequest[reqId] = true;
     }
 
     function fulfillRequest(
         bytes32 _requestId,
         uint256 amount
     ) public recordChainlinkFulfillment(_requestId) {
-        if (factory.paymentToken().balanceOf(address(this)) < amount || amount <= 0) {
+        if (payable(address(this)).balance < amount || amount <= 0) {
             emit RequestRejected(_requestId, amount);
         } else {
-            factory.paymentToken().transfer(requests[_requestId], amount);
-            emit Withdraw(requests[_requestId], id, amount);
+            uint256 platformFeeAmount = (amount * platformFee) / MAX_BPS;
+            uint256 creatorFeeAmount = (amount * creatorFee) / MAX_BPS;
+
+            payable(creator).transfer(creatorFeeAmount);
+            payable(factory.owner()).transfer(platformFeeAmount);
+            payable(requests[_requestId]).transfer(amount - (platformFeeAmount + creatorFeeAmount));
+
+            if (isJackpotRequest[_requestId]) {
+                emit JackpotWithdraw(requests[_requestId], id, amount, betIds[_requestId]);
+            } else {
+                emit Withdraw(requests[_requestId], id, amount, betIds[_requestId]);
+            }
             emit RequestFulfilled(_requestId, amount);
         }
     }
