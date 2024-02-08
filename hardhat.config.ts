@@ -43,6 +43,10 @@ const config: HardhatUserConfig = {
     goerli: {
       url: "https://rpc.ankr.com/eth_goerli",
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : []
+    },
+    sepolia: {
+      url: "https://rpc2.sepolia.org",
+      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : []
     }
   },
   mocha: {
@@ -50,6 +54,7 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
+      sepolia: process.env.ETHERSCAN_API_KEY || '',
       polygon: process.env.ETHERSCAN_API_KEY || '',
       polygonMumbai: process.env.ETHERSCAN_API_KEY || '',
       bsc: process.env.ETHERSCAN_API_KEY || '',

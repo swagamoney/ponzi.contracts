@@ -3,15 +3,20 @@ pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
 import "./interfaces/IGameFactory.sol";
+import "./EIP712Initializable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
-contract Game is Initializable, ChainlinkClient, Ownable {
-    using Chainlink for Chainlink.Request;
+contract Game is Initializable, EIP712Initializable, Ownable {
+    using Strings for uint256;
+
+    string constant private SIGNING_DOMAIN = "GameContractDomain";
+    string constant private SIGNATURE_VERSION = "1";
 
     uint256 constant public MAX_BPS = 10000;
 
     uint256 public id;
+    uint256 public nonce;
     uint256 public creatorFee;
     uint256 public platformFee;
     uint256 public minDeposit;
@@ -31,15 +36,14 @@ contract Game is Initializable, ChainlinkClient, Ownable {
 
     constructor() {}
 
-    function initialize(uint256 _id, address _creator, uint256 _creatorFee, uint256 _minDeposit, uint256 _maxDeposit) external initializer onlyOwner {
+    function initialize(uint256 _id, address _creator, uint256 _creatorFee, uint256 _minDeposit, uint256 _maxDeposit) external payable initializer {
         _transferOwnership(msg.sender);
         factory = IGameFactory(msg.sender);
+        _initEip712(SIGNING_DOMAIN, SIGNATURE_VERSION);
         id = _id;
         creator = _creator;
         creatorFee = _creatorFee / 2;
         platformFee = _creatorFee / 2;
-        setChainlinkOracle(factory.chainlinkOracle());
-        setChainlinkToken(factory.chainlinkToken());
         minDeposit = _minDeposit;
         maxDeposit = _maxDeposit;
     }
@@ -50,94 +54,37 @@ contract Game is Initializable, ChainlinkClient, Ownable {
         emit Deposit(sender, id, msg.value);
     }
 
-    function requestWithdraw(string memory betId) public {
-        address sender = msg.sender;
-        Chainlink.Request memory req = buildChainlinkRequest(
-            factory.jobId(),
-            address(this),
-            this.fulfillRequest.selector
-        );
-        req.add(
-            "get",
-            string(abi.encodePacked(factory.baseURI(), factory.endpoint(), "?gameId=", id, "&wallet=", addressToString(sender), "&betId=", betId))
-        );
-        req.add("path", "data,amount");
-        req.addInt("times", 10**18);
+    function withdraw(bool isJackpot, string memory betId, uint256 amount, uint256 _nonce, bytes calldata signature) public {
+        require(_nonce == nonce, "Invalid nonce");
+        address recipient = msg.sender;
 
-        factory.requestLink();
-        bytes32 reqId = sendChainlinkRequest(req, factory.chainlinkFee());
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256("Claim(uint256 amount,uint256 nonce,address recipient)"),
+            amount,
+            _nonce,
+            recipient
+        ));
 
-        betIds[reqId] = betId;
-        requests[reqId] = msg.sender;
-    }
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address signer = ECDSA.recover(digest, signature);
 
-    function requestJackpotWithdraw(string memory betId) public {
-        address sender = msg.sender;
-        Chainlink.Request memory req = buildChainlinkRequest(
-            factory.jobId(),
-            address(this),
-            this.fulfillRequest.selector
-        );
-        req.add(
-            "get",
-            string(abi.encodePacked(factory.baseURI(), factory.endpoint(), "?gameId=", id, "&wallet=", addressToString(sender), "&betId=", betId))
-        );
-        req.add("path", "data,amount");
-        req.addInt("times", 10**18);
+        require(signer == factory.owner(), "Invalid signature");
+        uint256 platformFeeAmount = (amount * platformFee) / MAX_BPS;
+        uint256 creatorFeeAmount = (amount * creatorFee) / MAX_BPS;
 
-        factory.requestLink();
-        bytes32 reqId = sendChainlinkRequest(req, factory.chainlinkFee());
+        payable(creator).transfer(creatorFeeAmount);
+        payable(factory.owner()).transfer(platformFeeAmount);
+        payable(recipient).transfer(amount - (platformFeeAmount + creatorFeeAmount));
 
-        requests[reqId] = msg.sender;
-        betIds[reqId] = betId;
-        isJackpotRequest[reqId] = true;
-    }
-
-    function fulfillRequest(
-        bytes32 _requestId,
-        uint256 amount
-    ) public recordChainlinkFulfillment(_requestId) {
-        if (payable(address(this)).balance < amount || amount <= 0) {
-            emit RequestRejected(_requestId, amount);
+        nonce++;
+        if (isJackpot) {
+            emit JackpotWithdraw(recipient, id, amount, betId);
         } else {
-            uint256 platformFeeAmount = (amount * platformFee) / MAX_BPS;
-            uint256 creatorFeeAmount = (amount * creatorFee) / MAX_BPS;
-
-            payable(creator).transfer(creatorFeeAmount);
-            payable(factory.owner()).transfer(platformFeeAmount);
-            payable(requests[_requestId]).transfer(amount - (platformFeeAmount + creatorFeeAmount));
-
-            if (isJackpotRequest[_requestId]) {
-                emit JackpotWithdraw(requests[_requestId], id, amount, betIds[_requestId]);
-            } else {
-                emit Withdraw(requests[_requestId], id, amount, betIds[_requestId]);
-            }
-            emit RequestFulfilled(_requestId, amount);
+            emit Withdraw(recipient, id, amount, betId);
         }
     }
 
-    function withdrawLink(address owner) public onlyOwner {
-        LinkTokenInterface link = LinkTokenInterface(factory.chainlinkToken());
-        require(
-            link.transfer(owner, link.balanceOf(address(this))),
-            "Unable to transfer"
-        );
-    }
 
-    function addressToString(address _address) internal pure returns (string memory) {
-        bytes32 value = bytes32(uint256(uint160(_address)));
-        bytes memory alphabet = "0123456789abcdef";
-
-        bytes memory str = new bytes(42);
-        str[0] = "0";
-        str[1] = "x";
-
-        for (uint256 i = 0; i < 20; i++) {
-            str[2 + i * 2] = alphabet[uint256(uint8(value[i + 12] >> 4))];
-            str[3 + i * 2] = alphabet[uint256(uint8(value[i + 12] & 0x0f))];
-        }
-
-        return string(str);
-    }
+    receive() external payable {}
 
 }

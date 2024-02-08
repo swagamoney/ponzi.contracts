@@ -11,6 +11,7 @@ interface IGameFactory {
     function chainlinkOracle() external view returns (address);
     function baseURI() external view returns (string memory);
     function endpoint() external view returns (string memory);
+    function jackpotEndpoint() external view returns (string memory);
     function jobId() external view returns (bytes32);
     function requestLink() external;
 }
